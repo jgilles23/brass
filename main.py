@@ -152,134 +152,6 @@ class Action_Controller:
 
 silent_test_controller = Action_Controller(test_mode_flag=True)
 
-class Super_Controller:
-    # This class acts as the controller used for the Supervisor class
-    def __init__(self, validation_controller: Action_Controller,
-                 selection_controller: Action_Controller,
-                 completion_controller: Action_Controller):
-        # Set the controllers for validation, selection, and completion
-        self.validation_controller = validation_controller
-        self.selection_controller = selection_controller
-        self.completion_controller = completion_controller
-
-class Action_Controller_Old:
-    """
-    This class acts as the controller for all actions through flags
-        v: boolean, determines if the the game components record all changes to the sub_action_hitory
-        sub_action_verbose: boolean, determines if each sub action is printed as it is changed
-        test_mode_flag: boolean, determines if when action fails a string is returned or a exception is thrown
-    What modes should we have and what should be thier associated flags?
-        perform mode (perform_verbose): 
-        test mode (test_verbose): 
-    Some common modes that could be used:
-    """
-
-    def __init__(self, record: bool = False, verbose: bool = False, test_mode: bool = False, 
-                 sub_controller: "Action_Controller" = "minimum"):
-        #Setup some common sub Action Controller modes
-        self.record_actions_flag = record #Creates a record of sub actions
-        if record == False and verbose == True:
-            raise ValueError("Verbose mode cannot be used without record mode.")
-        self.sub_action_verbose = verbose #Prints all sub action statements
-        self.test_mode_flag = test_mode #Prevents thown excpetions, used to see if moves are valid
-        self.main_action_history = [] #List of all main actions taken
-        self.sub_action_history = [] #List of all sub actions taken
-        # The sub_controller is used to pass the controller to sub actions, if it is not None
-        # If it is None, a sub_controller is created with minimal settings
-        # The sub_controller is used when testing actions
-        if sub_controller == "minimum":
-            # Create a minimal sub controller with no recording or verbose mode
-            self.sub_controller = Action_Controller(record=False, verbose=False, test_mode=True, sub_controller=None)
-        else:
-            self.sub_controller = sub_controller
-    
-    def start_main_action(self, action: "Action", game: "Game_State"):
-        if self.record_actions_flag:
-            # Start a new main action and append it to the main action history
-            if self.sub_action_verbose:
-                if self.test_mode_flag:
-                    print("Starting " + game.string_print())
-                    print(f"Testing action: {action.action_string}")
-                else:
-                    #When the controller is started, print the first game state
-                    if len(self.main_action_history) == 0:
-                        print("Starting " + game.string_print())
-                    print(f"Performing action: {action.action_string}")
-            self.main_action_history.append(action)
-            # Start a new sub action history for this main action
-            self.sub_action_history.append([])
-    
-    def end_main_action(self, game: "Game_State"):
-        if self.sub_action_verbose:
-            # Print ending game state for each test if in test mode, otherwise print the game state
-            if self.test_mode_flag:
-                print(f"  Successful action")
-                print("Ending " + game.string_print())
-                print()
-            else:
-                print(game.string_print())
-    
-    def start_game_completion(self, game: "Game_State"):
-        if self.sub_action_verbose:
-            # Print starting game state
-            print()
-            print("GAME COMPLETION MODE")
-            print(game.string_print(action_history_flag=True))
-    
-    def next_game_completion(self, chosen_child: "Game_State", valid_children: list["Game_State"]):
-        #Print the child choices, and print the selected choice
-        if self.record_actions_flag:
-            # Record the sub actions, using the settings of this controller
-            chosen_child_controller = Action_Controller(
-                record=self.record_actions_flag,
-                verbose=False,
-                test_mode=self.test_mode_flag,
-                sub_controller=self.sub_controller
-            )
-            chosen_child.parent.take_action_copy(chosen_child.previous_action, chosen_child_controller)
-        if self.sub_action_verbose:
-            # Print next game state
-            print(f"Choosing between: {[g.previous_action.action_string for g in valid_children]}")
-            print("Chosen:", chosen_child.string_print(action_history_flag=False))
-
-    def record(self, object, name, delta = None, new_value = None):
-        if not self.record_actions_flag:
-            # If the record_actions_flag is not set, then do not record the action
-            return
-        # If object is a Player, append ".P<player_id>" to name
-        if isinstance(object, Player):
-            name = f"P{object.player_id}.{name}"
-        elif isinstance(object, Played_Industry):
-            # Use the industry tile name, omitting the "P" from the player id
-            name = f"{object.properties.name}.{name}"
-        if self.sub_action_verbose:
-            # If the sub_action_verbose flag is set, then print the action taken
-            if delta is not None:
-                print(f"  {name} changed by {delta}")
-            elif new_value is not None:
-                print(f"  {name} changed to {new_value}")
-        # Append to sub_action_history
-        self.sub_action_history[-1].append({
-            "name": name,
-            "delta": delta,
-            "new_value": new_value
-        })
-    
-    def test(self, string: str):
-        #Test the action string and return a string if the action is invalid
-        if self.test_mode_flag:
-            if self.sub_action_verbose:
-                #If the sub_action_verbose flag is set, then print the action taken
-                print(f"  Error in action: {string}")
-                print()
-            #If test mode is on, then return a string if the action is invalid
-            return string
-        else:
-            #If test mode is off, then raise an exception if the action is invalid
-            raise ValueError(string)
-    
-
-
 class Industry_Properties:
     def __init__(self, name, csvData):
         self.name = name
@@ -692,7 +564,8 @@ class Game_State():
         # Perform the action based on the parsed arguments
         if action.main_action == "build":
             #Have the player remove the tile from their board spending money
-            built_tile = active_player.build_tile(action.arguments[0].tile, controller=controller)
+            if built_tile := active_player.build_tile(action.arguments[0].tile, controller=controller):
+                if isinstance(built_tile, str): return built_tile
             if isinstance(built_tile, str): return built_tile #There was an error in building the tile
             # Check if the tile can't be built due to age restrictions
             if built_tile.age_restriction and built_tile.age_restriction != self.age:
@@ -751,12 +624,12 @@ class Game_State():
             if played_industry is None:
                 return controller.test(f"Invalid action: Player {action.player_id} cannot sell a resource from {tile_name} at this time.")
             # Sell the good from the played industry
-            played_industry.sell(controller=controller)
+            if (r := played_industry.sell(controller=controller)): return r
             # Consume the appropriate amount of beer
             if (r := self.spend_resources("Unknown", ["Beer"]*played_industry.properties.beer_cost, ["Beer"]*played_industry.properties.beer_cost, active_player, controller=controller)): return r
             #This should complete the sell action
         elif action.main_action == "loan":
-            active_player.loan(controller=controller)
+            if (r := active_player.loan(controller=controller)): return r
         elif action.main_action == "scout":
             #Raise an error as scouting is not yet implemented
             return controller.test(f"Invalid action: Player {action.player_id} cannot scout at this time.")
@@ -766,13 +639,6 @@ class Game_State():
         else:
             return controller.test(f"Invalid action: {action.main_action} is not a valid action.")
         # The action was successful, so we can move to the next card play
-        self.increment_card_play()
-        # Have the controller record end of the action
-        controller.end_action(game = self)
-        # Action was successful, retuurn a blank string
-        return ""
-    
-    def increment_card_play(self):
         self.card_play += 1
         self.active_player_card += 1
         #Every other card, move to the next player
@@ -787,6 +653,10 @@ class Game_State():
         if self.active_player_index >= len(self.players):
             self.active_player_index = 0
             self.round += 1
+        # Have the controller record end of the action
+        controller.end_action(game = self)
+        # Action was successful, return a blank string
+        return ""
 
     def spend_resources(self, build_location: str, resource_locations: list, required_resources: list, active_player: Player, controller: Action_Controller):
         # This function is used to check if the resources spent are valid and flips tiles as needed
@@ -865,7 +735,7 @@ class Supervisor:
         self.games: list[Game_State] = []
         self.games.append(Game_State())  # Start with a single game state
 
-    def prune_and_complete(self, game: Game_State, controller: Action_Controller) -> Game_State:
+    def prune_and_complete(self, game: Game_State, controller: Action_Controller) -> Game_State | None:
         # Take a random previous state of the game, based on the number of card plays, trace back through parents
         # For that previous state, complete the game using the complete_game function
         i = random.randint(0, game.card_play - 1)  # Choose a random card play to trace back to
@@ -873,19 +743,23 @@ class Supervisor:
         new_game = self.complete_game(pruned_game, controller=controller)
         return new_game
 
-    def complete_game(self, game: Game_State, controller: Action_Controller) -> Game_State:
+    def complete_game(self, game: Game_State, controller: Action_Controller) -> Game_State | None:
         # This function will call decide_and_perform_action until the game is complete
         # Complete the game by performing actions until the game is complete
         while game.round < 8:
             game = self.decide_and_perform_action(game, controller=controller)
+            if game is None:
+                # If there are no valid actions, break the loop
+                return None
         return game
 
-    def decide_and_perform_action(self, game: Game_State, controller: Action_Controller) -> Game_State:
+    def decide_and_perform_action(self, game: Game_State, controller: Action_Controller) -> Game_State | None:
         # Get the valid children of the game, choose one at random, and return the new game state
         # Setup selection
         valid_children = self.get_valid_children(game, controller=silent_test_controller) #silent_test_controller is used to avoid printing test messages
         if not valid_children:
-            raise ValueError("No valid children found for the game state.")
+            # If there are no valid children, return None
+            return None
         # Choose a random child game state
         chosen_child = random.choice(valid_children)
         controller.chosen_game_completion(chosen_child=chosen_child, valid_children=valid_children)
@@ -896,37 +770,11 @@ class Supervisor:
         # Called to take a turn in a game
         # Evaluates each possible action, for the successful actions, it will return a new game state with the action applied
         valid_children = []
-        print(game.string_print(action_history_flag=True))
         for action in game.get_untested_actions():
             new_game_state, return_string = game.take_action_copy(action, controller)
             if not return_string:
                 valid_children.append(new_game_state)
         return valid_children
-
-
-class Test_Class():
-    def __init__(self):
-        self.test_property = 7
-        self.test_property_2 = [8, 9, 10]
-    def copy(self):
-        # Copy self to a new object (shallow copy)
-        this = copy.copy(self)
-        this.test_property_2 = self.test_property_2[:]  # Create a shallow copy of the list
-        return this
-    def set_test_property(self, value):
-        # Set the test property to a new value
-        self.test_property += value
-    def set_test_property_2(self, value):
-        # Set the test property 2 to a new value
-        self.test_property_2[0] = value
-
-test_1 = Test_Class()
-test_2 = test_1.copy()
-test_2.set_test_property(10)
-test_2.set_test_property_2(20)
-print(f"Test 1 property: {test_1.test_property}, Test 2 property: {test_2.test_property}")
-print(f"Test 1 property 2: {test_1.test_property_2}, Test 2 property 2: {test_2.test_property_2}")
-
 
 # Example action strings
 partial_action_string = [
@@ -936,7 +784,7 @@ partial_action_string = [
     "build.card:Beer2.@Birmingham1<Iron>",
     #"sell.card:Crate0.$Location0<Beer>"
 ]
-game = Game_State()
+main_game = Game_State()
 preconfigured_input_controller = Action_Controller(
     header_string="Preconfigured Inputs",
     starting_state_flag=True,
@@ -946,9 +794,9 @@ preconfigured_input_controller = Action_Controller(
     series_mode_flag=True
 )
 for action_string in partial_action_string:
-    action_string = f"{game.card_play}.{game.active_player_index}.{action_string}"
-    action = Action_Parsed(action_string)
-    game, return_string = game.take_action_copy(action, preconfigured_input_controller)
+    action_string = f"{main_game.card_play}.{main_game.active_player_index}.{action_string}"
+    action_sub = Action_Parsed(action_string)
+    main_game, return_string = main_game.take_action_copy(action_sub, preconfigured_input_controller)
 
 print()
 print("----------------------------------------------------")
@@ -969,9 +817,10 @@ completion_controller = Action_Controller(
     action_performed_flag=True,
     action_detail_flag=True,
     ending_state_flag=True,
-    series_mode_flag=False
+    ending_state_action_history_flag=True,
+    series_mode_flag=True
 )
 
-supervisor = Supervisor()
-# q = supervisor.get_valid_children(game, testing_controller)
-q = supervisor.complete_game(game, controller=completion_controller)
+supervisor_main = Supervisor()
+# q = supervisor.get_valid_children(main_game, testing_controller)
+q = supervisor_main.complete_game(main_game, controller=completion_controller)
