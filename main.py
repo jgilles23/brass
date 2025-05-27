@@ -20,9 +20,11 @@ with open(csv_path, newline='', encoding='utf-8-sig') as csvfile:
         key = f"{row['Industry']}{row['Sequence']}"
         industry_data[key] = dict(row)
 
-class Sub_Action_Controller:
-    def __init__(self, test_mode = False, header_flag: bool = False, indent_baseline: int = 0, starting_state_flag: bool = False, action_list_flag: bool = False,
-                 action_performed_flag: bool = False, action_detail_flag: bool = False, ending_state_flag: bool = False,
+class Action_Controller:
+    def __init__(self, test_mode_flag = False, header_string: str = "", indent_baseline: int = 0, 
+                 starting_state_flag: bool = False, possible_actions_flag: bool = False,
+                 action_performed_flag: bool = False, action_detail_flag: bool = False, 
+                 ending_state_flag: bool = False, ending_state_action_history_flag: bool = False,
                  blank_line_flag: bool = False, series_mode_flag: bool = False):
         '''
         A complete action print can looks like this at most:
@@ -37,47 +39,57 @@ class Sub_Action_Controller:
             Blank Line (): prints a blank line for readibility
         '''
         #Save all of the flags to this sub action controller
-        self.test_mode = test_mode
-        self.header_flag = header_flag
+        self.test_mode_flag = test_mode_flag
+        self.header_string = header_string
         self.indent_baseline = indent_baseline
-        self.indent = self.indent_baseline + (2 if header_flag else 0)  # Indent is baseline + 2 spaces if header_flag is True
+        self.indent = self.indent_baseline # Indent is baseline + 2 spaces if header_string is not empty (this is added later)
         self.starting_state_flag = starting_state_flag
-        self.action_list_flag = action_list_flag
+        self.possible_actions_flag = possible_actions_flag
         self.action_performed_flag = action_performed_flag
         self.action_detail_flag = action_detail_flag
         self.ending_state_flag = ending_state_flag
+        self.ending_state_action_history_flag = ending_state_action_history_flag
         self.blank_line_flag = blank_line_flag
         # Set a single flag "verbose" if any of the above flags are True
-        self.verbose = any([self.header_flag, self.starting_state_flag, self.action_list_flag, self.action_performed_flag, 
+        self.verbose = any([self.header_string, self.starting_state_flag, self.possible_actions_flag, self.action_performed_flag,
                             self.action_detail_flag, self.ending_state_flag, self.blank_line_flag])
         # Series mode flag, if True, then the header and starting state are not printed for each action, only the first action
         self.series_mode_flag = series_mode_flag #Default is parallel mode where headers are re-printed every time
         self.series_header_disable = False #Skips repeating of header & starting state
+        #Set the action list
+        self.possible_children = None
 
     def indent_pr(self, message: str):
         # Print the message with the appropriate indentation
-        print(" " * self.indent + message)
+        message = message.replace("\n", "\n" + " >" * self.indent)  # Ensure newlines are indented
+        print(" >" * self.indent + message)
     
     def restart_series(self):
         # Start a series of actions, disables the header printing
         self.series_header_disable = False
     
-    def start_action(self, game: "Game_State" = None, header: str = None, action_list: list["Action"] = None, action: "Action" = None):
-        if self.header_flag and not self.series_header_disable:
-            # Print the header if header_flag is True
-            if header is None:
-                raise ValueError("Header must be provided if header_flag is True.")
-            self.indent_pr(header)
+    def set_possible_children(self, possible_children: list["Game_State"]):
+        # Set the possible children for the controller, used to print the possible actions
+        self.possible_children = possible_children
+
+    def start_action(self, action: "Action" = None, game: "Game_State" = None):
+        if not self.verbose:
+            # If verbose is False, do not print anything
+            return
+        if self.header_string and not self.series_header_disable:
+            # Print the header if header_string is not empty
+            self.indent_pr(self.header_string)
+            self.indent += 1  # Increase indent for the next lines
         if self.starting_state_flag and not self.series_header_disable:
             # Print the starting game state
             if game is None:
                 raise ValueError("Game state must be provided if starting_state_flag is True.")
-            self.indent_pr("Starting " + game.string_print())
-        if self.action_list_flag:
+            self.indent_pr("Starting " + game.string_print(action_history_flag=True))
+        if self.possible_actions_flag:
             # Print the possible actions that can be performed
-            if action_list is None:
-                raise ValueError("Action list must be provided if action_list_flag is True.")
-            self.indent_pr("Possible Actions: " + ", ".join([action.action_string for action in action_list]))
+            if self.possible_children is None:
+                raise ValueError("Possible children must be provided via self.set_possible_children() if possible_actions_flag is True.")
+            self.indent_pr("Possible Actions: " + ", ".join([child.previous_action.action_string for child in self.possible_children]))
         if self.action_performed_flag:
             # Print the action being performed
             if action is None:
@@ -88,18 +100,21 @@ class Sub_Action_Controller:
             self.series_header_disable = True
 
     def end_action(self, game: "Game_State" = None):
+        if not self.verbose:
+            # If verbose is False, do not print anything
+            return
         if self.ending_state_flag:
             # Print the ending game state
             if game is None:
                 raise ValueError("Game state must be provided if ending_state_flag is True.")
-            self.indent_pr("Ending " + game.string_print())
+            self.indent_pr("Ending " + game.string_print(action_history_flag=self.ending_state_action_history_flag))
         if self.blank_line_flag:
             # Print a blank line if blank_line_flag is True
             self.indent_pr("")
 
-    def record_action_detail(self, object, name, delta = None, new_value = None):
-        # Print the sub action being performed
-        if not self.action_detail_flag:
+    def record(self, object, name, delta = None, new_value = None):
+        if not self.verbose:
+            # If the verbose flag is not set, then do not record the action
             return
         # If object is a Player, append ".P<player_id>" to name
         if isinstance(object, Player):
@@ -107,17 +122,51 @@ class Sub_Action_Controller:
         elif isinstance(object, Played_Industry):
             # Use the industry tile name, omitting the "P" from the player id
             name = f"{object.properties.name}.{name}"
-        # Print the action taken
-        if delta is not None:
-            self.indent_pr(f"  {name} changed by {delta}")
-        elif new_value is not None:
-            self.indent_pr(f"  {name} changed to {new_value}")
+        if self.action_detail_flag:
+            # If the action_detail_flag is set, then print the action taken
+            if delta is not None:
+                self.indent_pr(f"  {name} changed by {delta}")
+            elif new_value is not None:
+                self.indent_pr(f"  {name} changed to {new_value}")
+    
+    def test(self, string: str):
+        #Test the action string and return a string if the action is invalid
+        if self.test_mode_flag:
+            if self.action_detail_flag:
+                #If the action_detail_flag is set, then print the action taken
+                print(f"  Error in action: {string}")
+                print()
+            #If test mode is on, then return a string if the action is invalid
+            return string
+        else:
+            #If test mode is off, then raise an exception if the action is invalid
+            raise ValueError(string)
+    
+    def chosen_game_completion(self, chosen_child: "Game_State", valid_children: list["Game_State"]):
+        if not self.verbose:
+            # If verbose is False, do not print anything
+            return
+        #Print the child choices, and print the selected choice
+        self.set_possible_children(valid_children)
+        chosen_child.parent.take_action_copy(chosen_child.previous_action, self)
 
-class Action_Controller:
+silent_test_controller = Action_Controller(test_mode_flag=True)
+
+class Super_Controller:
+    # This class acts as the controller used for the Supervisor class
+    def __init__(self, validation_controller: Action_Controller,
+                 selection_controller: Action_Controller,
+                 completion_controller: Action_Controller):
+        # Set the controllers for validation, selection, and completion
+        self.validation_controller = validation_controller
+        self.selection_controller = selection_controller
+        self.completion_controller = completion_controller
+
+class Action_Controller_Old:
     """
     This class acts as the controller for all actions through flags
         v: boolean, determines if the the game components record all changes to the sub_action_hitory
-        sub_action_verbose: boolean, determiens if each sub action is printed as it is changed
+        sub_action_verbose: boolean, determines if each sub action is printed as it is changed
         test_mode_flag: boolean, determines if when action fails a string is returned or a exception is thrown
     What modes should we have and what should be thier associated flags?
         perform mode (perform_verbose): 
@@ -127,13 +176,6 @@ class Action_Controller:
 
     def __init__(self, record: bool = False, verbose: bool = False, test_mode: bool = False, 
                  sub_controller: "Action_Controller" = "minimum"):
-        self.sub_controller = Sub_Action_Controller(
-            header_flag: bool = False, indent_baseline: int = 0, starting_state_flag: bool = False, action_list_flag: bool = False,
-            action_performed_flag: bool = False, action_detail_flag: bool = False, ending_state_flag: bool = False,
-            blank_line_flag: bool = False, series_mode_flag: bool = False
-        )
-        self.mode = "hello"
-        if self.mode == "hello"
         #Setup some common sub Action Controller modes
         self.record_actions_flag = record #Creates a record of sub actions
         if record == False and verbose == True:
@@ -641,7 +683,7 @@ class Game_State():
     def _take_action_self(self, action: Action, controller: Action_Controller) -> str:
         # Take an action modifying the game state in place -- Really should not be used
         # Test if the main action should be recorded in the controller
-        controller.start_main_action(action = action, game = self)
+        controller.start_action(action = action, game = self)
         #The the action specified by the action string, otherwise an error message will be thrown
         self.previous_action = action  # Set the previous action for lineage tracking
         if action.player_id != self.players[self.active_player_index].player_id:
@@ -701,7 +743,7 @@ class Game_State():
         elif action.main_action == "develop":
             for argument in action.arguments:
                 if (r := active_player.develop_tile(argument.tile, controller=controller)): return r
-                if (r := game.spend_resources("Unknown", argument.resources, ["Iron"], active_player, controller=controller)): return r
+                if (r := self.spend_resources("Unknown", argument.resources, ["Iron"], active_player, controller=controller)): return r
         elif action.main_action == "sell":
             tile_name = action.arguments[0].tile
             # Find the played industry with the specified tile name
@@ -726,7 +768,7 @@ class Game_State():
         # The action was successful, so we can move to the next card play
         self.increment_card_play()
         # Have the controller record end of the action
-        controller.end_main_action(game = self)
+        controller.end_action(game = self)
         # Action was successful, retuurn a blank string
         return ""
     
@@ -823,32 +865,30 @@ class Supervisor:
         self.games: list[Game_State] = []
         self.games.append(Game_State())  # Start with a single game state
 
-    def prune_and_complete(self, game: Game_State):
+    def prune_and_complete(self, game: Game_State, controller: Action_Controller) -> Game_State:
         # Take a random previous state of the game, based on the number of card plays, trace back through parents
         # For that previous state, complete the game using the complete_game function
         i = random.randint(0, game.card_play - 1)  # Choose a random card play to trace back to
         pruned_game = game.get_state_at_card_play(i)
-        new_game = self.complete_game(pruned_game)
+        new_game = self.complete_game(pruned_game, controller=controller)
         return new_game
 
-    def complete_game(self, game: Game_State, controller: Action_Controller):
+    def complete_game(self, game: Game_State, controller: Action_Controller) -> Game_State:
         # This function will call decide_and_perform_action until the game is complete
-        # Record starting state if valid
-        controller.start_game_completion(game=game)
         # Complete the game by performing actions until the game is complete
         while game.round < 8:
             game = self.decide_and_perform_action(game, controller=controller)
         return game
-    
+
     def decide_and_perform_action(self, game: Game_State, controller: Action_Controller) -> Game_State:
         # Get the valid children of the game, choose one at random, and return the new game state
-        # Setup selection 
-        valid_children = self.get_valid_children(game, controller=controller.sub_controller)
+        # Setup selection
+        valid_children = self.get_valid_children(game, controller=silent_test_controller) #silent_test_controller is used to avoid printing test messages
         if not valid_children:
             raise ValueError("No valid children found for the game state.")
         # Choose a random child game state
         chosen_child = random.choice(valid_children)
-        controller.next_game_completion(chosen_child=chosen_child, valid_children=valid_children)
+        controller.chosen_game_completion(chosen_child=chosen_child, valid_children=valid_children)
         # Set parent lineage
         return chosen_child
 
@@ -856,11 +896,36 @@ class Supervisor:
         # Called to take a turn in a game
         # Evaluates each possible action, for the successful actions, it will return a new game state with the action applied
         valid_children = []
+        print(game.string_print(action_history_flag=True))
         for action in game.get_untested_actions():
             new_game_state, return_string = game.take_action_copy(action, controller)
             if not return_string:
                 valid_children.append(new_game_state)
         return valid_children
+
+
+class Test_Class():
+    def __init__(self):
+        self.test_property = 7
+        self.test_property_2 = [8, 9, 10]
+    def copy(self):
+        # Copy self to a new object (shallow copy)
+        this = copy.copy(self)
+        this.test_property_2 = self.test_property_2[:]  # Create a shallow copy of the list
+        return this
+    def set_test_property(self, value):
+        # Set the test property to a new value
+        self.test_property += value
+    def set_test_property_2(self, value):
+        # Set the test property 2 to a new value
+        self.test_property_2[0] = value
+
+test_1 = Test_Class()
+test_2 = test_1.copy()
+test_2.set_test_property(10)
+test_2.set_test_property_2(20)
+print(f"Test 1 property: {test_1.test_property}, Test 2 property: {test_2.test_property}")
+print(f"Test 1 property 2: {test_1.test_property_2}, Test 2 property 2: {test_2.test_property_2}")
 
 
 # Example action strings
@@ -872,15 +937,41 @@ partial_action_string = [
     #"sell.card:Crate0.$Location0<Beer>"
 ]
 game = Game_State()
-main_controller = Action_Controller(record=True, verbose=False, test_mode=False)
+preconfigured_input_controller = Action_Controller(
+    header_string="Preconfigured Inputs",
+    starting_state_flag=True,
+    action_performed_flag=True,
+    action_detail_flag=True,
+    ending_state_flag=True,
+    series_mode_flag=True
+)
 for action_string in partial_action_string:
     action_string = f"{game.card_play}.{game.active_player_index}.{action_string}"
     action = Action_Parsed(action_string)
-    game, return_string = game.take_action_copy(action, main_controller)
+    game, return_string = game.take_action_copy(action, preconfigured_input_controller)
 
 print()
 print("----------------------------------------------------")
 print()
+
+testing_controller = Action_Controller(
+    test_mode_flag=True,
+    starting_state_flag=True,
+    action_performed_flag=True,
+    action_detail_flag=True,
+    ending_state_flag=True,
+    blank_line_flag=True
+)
+completion_controller = Action_Controller(
+    header_string = "Game Completion",
+    starting_state_flag=True,
+    possible_actions_flag=True,
+    action_performed_flag=True,
+    action_detail_flag=True,
+    ending_state_flag=True,
+    series_mode_flag=False
+)
+
 supervisor = Supervisor()
-main_controller = Action_Controller(record=True, verbose=True, test_mode=False)
-q = supervisor.complete_game(game, main_controller)
+# q = supervisor.get_valid_children(game, testing_controller)
+q = supervisor.complete_game(game, controller=completion_controller)
